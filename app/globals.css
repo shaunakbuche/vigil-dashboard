@@ -1,0 +1,73 @@
+@import "tailwindcss";
+
+@theme inline {
+  --color-bg-primary: #050508;
+  --color-bg-glass: rgba(255,255,255,0.05);
+  --color-glass-border: rgba(255,255,255,0.08);
+  --color-accent: #10B981;
+  --color-accent-glow: rgba(16,185,129,0.15);
+  --color-violet: #8B5CF6;
+  --color-violet-light: #A78BFA;
+  --color-warning: #F59E0B;
+  --color-critical: #EF4444;
+  --font-display: var(--font-outfit);
+  --font-body: var(--font-dm-sans);
+  --font-mono: var(--font-jetbrains);
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html, body {
+  margin: 0; padding: 0;
+  background: #050508;
+  color: #fafafa;
+  overflow: hidden;
+  height: 100%;
+}
+
+.glass-card {
+  background: rgba(255,255,255,0.05);
+  backdrop-filter: blur(12px) saturate(1.2);
+  -webkit-backdrop-filter: blur(12px) saturate(1.2);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 16px;
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.02), 0 8px 32px rgba(0,0,0,0.4);
+  position: relative;
+  overflow: hidden;
+}
+
+.glass-card::before {
+  content: "";
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 1px;
+  background: linear-gradient(90deg, rgba(16,185,129,0.35) 0%, rgba(139,92,246,0.3) 50%, rgba(59,130,246,0.2) 100%);
+  pointer-events: none;
+  z-index: 1;
+}
+
+.vital-num {
+  font-family: var(--font-jetbrains, 'JetBrains Mono', monospace);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.label-upper {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: rgba(255,255,255,0.35);
+}
+
+@keyframes alert-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(239,68,68,0), inset 0 0 0 1px rgba(255,255,255,0.02), 0 8px 32px rgba(0,0,0,0.4); }
+  50% { box-shadow: 0 0 24px 6px rgba(239,68,68,0.18), inset 0 0 0 1px rgba(255,255,255,0.02), 0 8px 32px rgba(0,0,0,0.4); }
+}
+
+@keyframes warning-glow {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(245,158,11,0), inset 0 0 0 1px rgba(255,255,255,0.02), 0 8px 32px rgba(0,0,0,0.4); }
+  50% { box-shadow: 0 0 16px 3px rgba(245,158,11,0.12), inset 0 0 0 1px rgba(255,255,255,0.02), 0 8px 32px rgba(0,0,0,0.4); }
+}
+
+/* hide scrollbars throughout */
+::-webkit-scrollbar { width: 0; height: 0; }
