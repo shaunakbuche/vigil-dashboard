@@ -129,7 +129,7 @@ void setup() {
 
   apds9960.enableProximity(true);
   apds9960.enableColor(true);
-  apds9960.setProximityGain(APDS9960_PGAIN_4X);
+  apds9960.setProxGain(APDS9960_PGAIN_4X);
 
   // Init RR buffer
   for (int i = 0; i < RR_WINDOW; i++) rrBuf[i] = 0;
