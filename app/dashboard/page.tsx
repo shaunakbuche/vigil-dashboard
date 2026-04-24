@@ -1051,6 +1051,13 @@ function DashboardShell() {
 // ─── Page export ──────────────────────────────────────────────────────────────
 
 export default function DashboardPage() {
+  // Delay render until after mount to avoid SSR/CSR hydration mismatch
+  // (VitalsProvider seeds state with Date.now() and Math.random()).
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => { setMounted(true); }, []);
+  if (!mounted) {
+    return <div style={{ height: "100vh", background: "#050508" }} />;
+  }
   return (
     <VitalsProvider>
       <DashboardShell />
