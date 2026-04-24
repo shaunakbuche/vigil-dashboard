@@ -150,6 +150,13 @@ class BLEClient {
       if (!trimmed) continue;
       try {
         const raw = JSON.parse(trimmed);
+        // Debug: log every 10th packet so we can see what's arriving
+        // without flooding the console.
+        (this as any)._dbg = ((this as any)._dbg ?? 0) + 1;
+        if ((this as any)._dbg % 10 === 0) {
+          // eslint-disable-next-line no-console
+          console.log("[BLE]", { t: raw.t, h: raw.h, rr: raw.rr, act: raw.act });
+        }
         const reading: FeatherReading = {
           temperature: raw.t    ?? 25,
           humidity:    raw.h    ?? 50,
