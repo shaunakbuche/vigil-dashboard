@@ -36,6 +36,8 @@ export interface Patient {
   alertState: AlertState;
   vitalsBuffer: VitalReading[];
   alertHistory: AlertEvent[];
+  /** "ble" marks the Feather hardware patient — mock ticker skips it */
+  deviceType?: "mock" | "ble";
 }
 
 export interface UIState {
@@ -62,18 +64,9 @@ function ecgSample(t: number): number {
   return p + q + r + s + twave + (Math.random() - 0.5) * 0.018;
 }
 
-function makePulseBuffer(bpm: number, n = 200): number[] {
-  return Array.from({ length: n }, (_, i) => {
-    const t = (i / n) * Math.PI * 2 * 2.5;
-    return ecgSample(t);
-  });
-}
-
-// ─── Initial patients ─────────────────────────────────────────────────────────
+// ─── Buffer helpers ───────────────────────────────────────────────────────────
 
 function makeBuffer(bpm: number, rr: number, temp: number, count = 60): VitalReading[] {
-  // Pulse waveform is now generated continuously in the canvas component,
-  // so ch1/ch2 are left empty here to keep memory light.
   return Array.from({ length: count }, (_, i) => ({
     timestamp: Date.now() - (count - i) * 1000,
     pulse: {
@@ -86,7 +79,9 @@ function makeBuffer(bpm: number, rr: number, temp: number, count = 60): VitalRea
   }));
 }
 
-const PATIENTS: Patient[] = [
+// ─── Initial patients ─────────────────────────────────────────────────────────
+
+const MOCK_PATIENTS: Patient[] = [
   {
     id: "bed-4", name: "Sophia Hayes", bed: "Bed 4", age: 67,
     diagnosis: "Post-op cardiac monitoring", admissionDate: "2026-04-14",
@@ -127,12 +122,30 @@ const PATIENTS: Patient[] = [
   },
 ];
 
+/** The BLE Feather patient — starts with placeholder data, updated live */
+const BLE_PATIENT: Patient = {
+  id: "feather-ble",
+  name: "Feather Headband",
+  bed: "BLE",
+  age: 0,
+  diagnosis: "Live sensor stream — nRF52840 Sense",
+  admissionDate: new Date().toISOString().split("T")[0],
+  physician: "Device",
+  initials: "FB",
+  alertState: "normal",
+  deviceType: "ble",
+  vitalsBuffer: makeBuffer(72, 16, 25.0),
+  alertHistory: [],
+};
+
+const ALL_PATIENTS: Patient[] = [...MOCK_PATIENTS, BLE_PATIENT];
+
 // ─── Alert thresholds ─────────────────────────────────────────────────────────
 
 function computeAlert(r: VitalReading): "normal" | "warning" | "critical" {
   const bpm = r.pulse.bpm;
-  const rr = r.respiratory.rate;
-  const c = r.temperature.celsius;
+  const rr  = r.respiratory.rate;
+  const c   = r.temperature.celsius;
   if (bpm > 120 || bpm < 50 || rr > 25 || rr < 10 || c > 38.5 || c < 35.5) return "critical";
   if (bpm > 100 || bpm < 60 || rr > 20 || rr < 12 || c > 37.3 || c < 36.1) return "warning";
   return "normal";
@@ -142,40 +155,46 @@ function computeAlert(r: VitalReading): "normal" | "warning" | "critical" {
 
 type Action =
   | { type: "VITAL_UPDATE"; patientId: string; reading: VitalReading }
+  | { type: "BLE_READING";  reading: VitalReading }
   | { type: "SELECT_PATIENT"; patientId: string }
   | { type: "ACKNOWLEDGE"; patientId: string }
   | { type: "SET_TIME_RANGE"; range: UIState["timeRange"] }
   | { type: "TOGGLE_SIDEBAR" };
 
+function updatePatient(patients: Patient[], id: string, reading: VitalReading): Patient[] {
+  const newLevel = computeAlert(reading);
+  return patients.map((p) => {
+    if (p.id !== id) return p;
+    const buf        = [...p.vitalsBuffer, reading].slice(-120);
+    const prevLevel  = p.alertState;
+    const alertState: AlertState =
+      prevLevel === "acknowledged" ? "acknowledged" : newLevel;
+    let alertHistory = p.alertHistory;
+    if (newLevel !== "normal" && prevLevel === "normal") {
+      alertHistory = [...alertHistory, {
+        id: `${Date.now()}-${p.id}`,
+        timestamp: Date.now(),
+        type: newLevel,
+        vital: "Vitals",
+        value: Math.round(reading.pulse.bpm),
+        message: `${newLevel === "critical" ? "Critical" : "Warning"}: vitals outside normal range`,
+      }];
+    }
+    return { ...p, vitalsBuffer: buf, alertState, alertHistory };
+  });
+}
+
 function reducer(state: StoreState, action: Action): StoreState {
   switch (action.type) {
-    case "VITAL_UPDATE": {
-      const newLevel = computeAlert(action.reading);
-      return {
-        ...state,
-        patients: state.patients.map((p) => {
-          if (p.id !== action.patientId) return p;
-          const buf = [...p.vitalsBuffer, action.reading].slice(-120);
-          const prevLevel = p.alertState;
-          const alertState: AlertState =
-            prevLevel === "acknowledged" ? "acknowledged" : newLevel;
-          let alertHistory = p.alertHistory;
-          if (newLevel !== "normal" && prevLevel === "normal") {
-            alertHistory = [...alertHistory, {
-              id: `${Date.now()}-${p.id}`,
-              timestamp: Date.now(),
-              type: newLevel,
-              vital: "Vitals",
-              value: Math.round(action.reading.pulse.bpm),
-              message: `${newLevel === "critical" ? "Critical" : "Warning"}: vitals outside normal range`,
-            }];
-          }
-          return { ...p, vitalsBuffer: buf, alertState, alertHistory };
-        }),
-      };
-    }
+    case "VITAL_UPDATE":
+      return { ...state, patients: updatePatient(state.patients, action.patientId, action.reading) };
+
+    case "BLE_READING":
+      return { ...state, patients: updatePatient(state.patients, "feather-ble", action.reading) };
+
     case "SELECT_PATIENT":
       return { ...state, ui: { ...state.ui, selectedPatientId: action.patientId } };
+
     case "ACKNOWLEDGE":
       return {
         ...state,
@@ -183,10 +202,13 @@ function reducer(state: StoreState, action: Action): StoreState {
           p.id === action.patientId ? { ...p, alertState: "acknowledged" } : p
         ),
       };
+
     case "SET_TIME_RANGE":
       return { ...state, ui: { ...state.ui, timeRange: action.range } };
+
     case "TOGGLE_SIDEBAR":
       return { ...state, ui: { ...state.ui, sidebarCollapsed: !state.ui.sidebarCollapsed } };
+
     default:
       return state;
   }
@@ -197,8 +219,8 @@ function reducer(state: StoreState, action: Action): StoreState {
 const Ctx = createContext<{ state: StoreState; dispatch: React.Dispatch<Action> } | null>(null);
 
 const INIT: StoreState = {
-  patients: PATIENTS,
-  ui: { selectedPatientId: PATIENTS[0].id, sidebarCollapsed: false, connected: true, timeRange: "30m" },
+  patients: ALL_PATIENTS,
+  ui: { selectedPatientId: ALL_PATIENTS[0].id, sidebarCollapsed: false, connected: true, timeRange: "30m" },
 };
 
 export function VitalsProvider({ children }: { children: React.ReactNode }) {
@@ -206,38 +228,29 @@ export function VitalsProvider({ children }: { children: React.ReactNode }) {
   const stateRef = useRef(state);
   stateRef.current = state;
 
+  // Mock 1 Hz ticker — only for non-BLE patients
   useEffect(() => {
-    // Fast tick: every 1s, push a fresh reading for every patient. With ~1 Hz
-    // updates, numeric readouts drift visibly, the trend chart scrolls like
-    // live telemetry, respiratory bars slide, and the temperature gauge
-    // springs smoothly toward each new value.
     const iv = setInterval(() => {
-      PATIENTS.forEach((p) => {
-        const last = stateRef.current.patients.find((x) => x.id === p.id)?.vitalsBuffer.at(-1);
-        // Mean-reverting random walk toward patient's baseline so alert
-        // states persist without the numbers running off to infinity.
-        const baseBpm  = p.alertState === "critical" ? 122 : p.alertState === "warning" ? 103 : last?.pulse.bpm ?? 75;
-        const baseRr   = p.alertState === "critical" ? 27  : p.alertState === "warning" ? 22  : last?.respiratory.rate ?? 16;
-        const baseTemp = p.alertState === "critical" ? 38.8 : p.alertState === "warning" ? 37.5 : last?.temperature.celsius ?? 36.8;
+      MOCK_PATIENTS.forEach((p) => {
+        const live = stateRef.current.patients.find((x) => x.id === p.id);
+        const last = live?.vitalsBuffer.at(-1);
 
-        const lastBpm  = last?.pulse.bpm ?? baseBpm;
-        const lastRr   = last?.respiratory.rate ?? baseRr;
+        const baseBpm  = p.alertState === "critical" ? 122 : p.alertState === "warning" ? 103 : 75;
+        const baseRr   = p.alertState === "critical" ? 27  : p.alertState === "warning" ? 22  : 16;
+        const baseTemp = p.alertState === "critical" ? 38.8 : p.alertState === "warning" ? 37.5 : 36.8;
+
+        const lastBpm  = last?.pulse.bpm          ?? baseBpm;
+        const lastRr   = last?.respiratory.rate   ?? baseRr;
         const lastTemp = last?.temperature.celsius ?? baseTemp;
 
-        // drift = small pull toward baseline + random jitter
-        const bpm     = Math.max(40, Math.min(145, lastBpm + (baseBpm - lastBpm) * 0.05 + (Math.random() - 0.5) * 2.4));
-        const rr      = Math.max(8,  Math.min(32,  lastRr  + (baseRr  - lastRr)  * 0.08 + (Math.random() - 0.5) * 0.7));
+        const bpm     = Math.max(40, Math.min(145, lastBpm  + (baseBpm  - lastBpm)  * 0.05 + (Math.random() - 0.5) * 2.4));
+        const rr      = Math.max(8,  Math.min(32,  lastRr   + (baseRr   - lastRr)   * 0.08 + (Math.random() - 0.5) * 0.7));
         const celsius = Math.max(34, Math.min(40,  lastTemp + (baseTemp - lastTemp) * 0.05 + (Math.random() - 0.5) * 0.08));
 
         dispatch({
           type: "VITAL_UPDATE",
           patientId: p.id,
-          reading: {
-            timestamp: Date.now(),
-            pulse: { bpm, ch1: [], ch2: [] }, // waveform samples generated locally in canvas
-            respiratory: { rate: rr },
-            temperature: { celsius },
-          },
+          reading: { timestamp: Date.now(), pulse: { bpm, ch1: [], ch2: [] }, respiratory: { rate: rr }, temperature: { celsius } },
         });
       });
     }, 1000);

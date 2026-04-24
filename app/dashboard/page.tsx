@@ -17,9 +17,13 @@ import { PulseWaveform }     from "@/components/vitals/pulse-waveform";
 import { HeartRateTrend }    from "@/components/vitals/heart-rate-trend";
 import { RespiratoryRate }   from "@/components/vitals/respiratory-rate";
 import { TemperatureGauge }  from "@/components/vitals/temperature-gauge";
+import { MotionCard }        from "@/components/vitals/motion-card";
+import { BLEConnect }        from "@/components/ui/ble-connect";
 import { VitalsProvider, useStore, useSelectedPatient } from "@/stores/vitals-store";
 import type { Patient, AlertState } from "@/stores/vitals-store";
 import { AnimatedNumber } from "@/lib/animated-number";
+import { bleClient, type FeatherReading } from "@/lib/ble-client";
+import { Bluetooth } from "lucide-react";
 
 type NavTab = "vitals" | "patients" | "analytics" | "alerts";
 
@@ -156,16 +160,22 @@ function Sidebar({
             <AnimatePresence>
               {!collapsed && (
                 <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="flex-1 min-w-0">
-                  <div className="text-[12px] font-medium text-white truncate" style={{ fontFamily: "var(--font-dm-sans,sans-serif)" }}>
+                  <div className="text-[12px] font-medium text-white truncate flex items-center gap-1.5" style={{ fontFamily: "var(--font-dm-sans,sans-serif)" }}>
                     {p.name.split(" ")[0]}
+                    {p.deviceType === "ble" && (
+                      <Bluetooth size={9} style={{ color: "#3B82F6", flexShrink: 0 }} />
+                    )}
                   </div>
                   <div className="text-[10px] truncate" style={{ color: "rgba(255,255,255,.28)", fontFamily: "monospace" }}>
-                    {p.bed}
+                    {p.deviceType === "ble" ? "BLE Device" : p.bed}
                   </div>
                 </motion.div>
               )}
             </AnimatePresence>
-            <StatusDot state={p.alertState} />
+            {p.deviceType === "ble"
+              ? <Bluetooth size={10} style={{ color: "#3B82F6", flexShrink: 0 }} />
+              : <StatusDot state={p.alertState} />
+            }
           </button>
         ))}
       </div>
@@ -305,6 +315,9 @@ function TopBar({ onSearchOpen }: { onSearchOpen(): void }) {
           </div>
           <LiveClock />
         </div>
+
+        {/* BLE Feather connect button */}
+        <BLEConnect />
 
         {/* User */}
         <div className="flex items-center gap-2">
@@ -466,7 +479,31 @@ function PatientPanel({ patient }: { patient: Patient }) {
 // ─── Vitals grid ──────────────────────────────────────────────────────────────
 
 function VitalsGrid() {
+  const { dispatch } = useStore();
   const patient = useSelectedPatient();
+  const isBLE   = patient.deviceType === "ble";
+
+  // Latest FeatherReading — only populated when BLE patient is selected & connected
+  const [featherReading, setFeatherReading] = useState<FeatherReading | null>(null);
+
+  // When BLE patient is selected, subscribe to live readings and push them
+  // into the store as VitalReadings so existing cards update.
+  useEffect(() => {
+    if (!isBLE) { setFeatherReading(null); return; }
+    return bleClient.onData((r) => {
+      setFeatherReading(r);
+      dispatch({
+        type: "BLE_READING",
+        reading: {
+          timestamp: Date.now(),
+          pulse:       { bpm: 72, ch1: [], ch2: [] }, // nRF52840 has no PPG — use stable placeholder
+          respiratory: { rate: r.rr },
+          temperature: { celsius: r.temperature },
+        },
+      });
+    });
+  }, [isBLE, dispatch]);
+
   return (
     <AnimatePresence mode="wait">
       <motion.div key={patient.id}
@@ -480,6 +517,14 @@ function VitalsGrid() {
           <div className="flex-1 min-w-0"><HeartRateTrend /></div>
           <div className="flex-1 min-w-0"><RespiratoryRate /></div>
           <div className="shrink-0" style={{ width: 190 }}><TemperatureGauge /></div>
+          {/* Motion card only appears when Feather BLE patient is selected */}
+          {isBLE && (
+            <motion.div className="shrink-0" style={{ width: 220 }}
+              initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: 20 }}>
+              <MotionCard reading={featherReading} index={4} />
+            </motion.div>
+          )}
         </div>
       </motion.div>
     </AnimatePresence>
