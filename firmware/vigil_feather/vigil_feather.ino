@@ -68,6 +68,12 @@ unsigned long lastRRCalc = 0;
 // ── Activity level ─────────────────────────────────────────────────────────
 float actSmooth = 0.0;
 
+// ── SHT31 state (for auto-reinit if sensor flakes out) ─────────────────────
+bool  sht31Ok    = false;
+float lastTempC  = NAN;
+float lastHum    = NAN;
+unsigned long lastShtRetry = 0;
+
 // ── Connection LED colours ─────────────────────────────────────────────────
 void setPixel(uint8_t r, uint8_t g, uint8_t b) {
   pixel.setPixelColor(0, pixel.Color(r, g, b));
@@ -98,9 +104,11 @@ void setup() {
   // I2C sensors
   Wire.begin();
 
-  if (!sht31.begin(0x44)) {
-    Serial.println("SHT31 not found!");
-    setPixel(40, 0, 0);
+  sht31Ok = sht31.begin(0x44);
+  if (!sht31Ok) {
+    Serial.println("SHT31 not found at boot — will retry in loop");
+  } else {
+    Serial.println("SHT31 OK");
   }
   if (!bmp280.begin()) {
     Serial.println("BMP280 not found!");
@@ -191,11 +199,29 @@ void updateRR(float az) {
 void loop() {
   delay(100);
 
-  // ── Read SHT31 ────────────────────────────────────────────────────────
-  float tempC    = sht31.readTemperature();
-  float humidity = sht31.readHumidity();
-  if (isnan(tempC))    tempC    = 25.0;
-  if (isnan(humidity)) humidity = 50.0;
+  // ── Read SHT31 (with auto-reinit on failure) ─────────────────────────
+  float tempC    = NAN;
+  float humidity = NAN;
+  if (sht31Ok) {
+    tempC    = sht31.readTemperature();
+    humidity = sht31.readHumidity();
+  }
+  // If reads are failing, retry begin() once per second
+  if ((isnan(tempC) || isnan(humidity)) && (millis() - lastShtRetry > 1000)) {
+    lastShtRetry = millis();
+    sht31Ok = sht31.begin(0x44);
+    if (sht31Ok) {
+      tempC    = sht31.readTemperature();
+      humidity = sht31.readHumidity();
+      Serial.println("SHT31 re-initialized");
+    }
+  }
+  // Hold last good value instead of a hard 25/50 fallback so it's obvious
+  // if the sensor truly never comes up.
+  if (!isnan(tempC))    lastTempC = tempC;
+  if (!isnan(humidity)) lastHum   = humidity;
+  if (isnan(tempC))    tempC    = isnan(lastTempC) ? -99.0 : lastTempC;
+  if (isnan(humidity)) humidity = isnan(lastHum)   ? -99.0 : lastHum;
 
   // ── Read BMP280 ───────────────────────────────────────────────────────
   float pressureHpa = bmp280.readPressure() / 100.0;
